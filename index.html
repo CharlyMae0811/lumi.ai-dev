@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LUMI – Fog Sphere + n8n</title>
+<style>
+  html,body{margin:0;height:100%;background:#0a0f14;color:#eaf4ff;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  .app{display:grid;grid-template-columns:minmax(340px,520px) 1fr;gap:24px;align-items:start;padding:24px;max-width:1200px;margin:0 auto}
+  .stage{display:grid;place-items:center}
+  #fog{width:min(520px,90vw);height:min(520px,90vw);display:block;filter:drop-shadow(0 20px 60px rgba(124,211,255,.25))}
+  .row{display:flex;align-items:center;gap:10px;justify-content:center;margin-top:10px}
+  button{background:#17324d;border:1px solid rgba(124,211,255,.45);color:#dff1ff;border-radius:12px;padding:12px 16px;cursor:pointer}
+  #status{opacity:.8}
+  .panel{border:1px solid rgba(124,211,255,.25);border-radius:14px;background:rgba(15,25,35,.6);padding:16px}
+  .panel h3{margin:0 0 10px 0;font-size:16px;opacity:.9}
+  .box{min-height:120px;white-space:pre-wrap;background:rgba(10,18,28,.6);border:1px solid rgba(124,211,255,.18);border-radius:10px;padding:12px}
+  .grid{display:grid;gap:16px}
+  .controls{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+  input[type="text"]{flex:1;min-width:220px;padding:10px 12px;border-radius:10px;border:1px solid rgba(124,211,255,.25);background:rgba(12,22,32,.6);color:#eaf4ff;outline:none}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- LEFT: Sphere + Mic -->
+  <div>
+    <div class="stage">
+      <canvas id="fog" width="520" height="520"></canvas>
+    </div>
+    <div class="row">
+      <button id="micBtn">🎤 Hold to talk</button>
+      <span id="status">mic: off</span>
+    </div>
+  </div>
+
+  <!-- RIGHT: Transcript + Reply -->
+  <div class="grid">
+    <div class="panel">
+      <h3>Transcript</h3>
+      <div id="transcript" class="box"></div>
+      <div class="controls">
+        <input id="textInput" type="text" placeholder="…or type here and click Send" />
+        <button id="sendHint">Send (hint)</button>
+        <button id="sendAnswer">Send (answer)</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Reply</h3>
+      <div id="reply" class="box"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ====== CONFIG: your n8n webhook ====== */
+const N8N_WEBHOOK_URL = "https://charly175820478052.app.n8n.cloud/webhook-test/seller-call-simulation";
+
+/* ====== Minimal foggy sphere with mic-reactive pulse ====== */
+const canvas = document.getElementById('fog');
+const ctx = canvas.getContext('2d');
+
+function sizeCanvas(){
+  const s = Math.min(520, Math.floor(window.innerWidth*0.9));
+  canvas.width = s; canvas.height = s;
+  canvas.style.width = s + 'px'; canvas.style.height = s + 'px';
+}
+sizeCanvas(); window.addEventListener('resize', sizeCanvas);
+
+let R = Math.min(canvas.width, canvas.height)*0.42;
+let audioCtx, analyser, micStream;
+let amp = 0; // smoothed amplitude
+
+function readAmplitude() {
+  if (!analyser) return 0;
+  const buf = new Uint8Array(analyser.fftSize);
+  analyser.getByteTimeDomainData(buf);
+  let sum=0; for (let i=0;i<buf.length;i++){ const v=(buf[i]-128)/128; sum+=v*v; }
+  return Math.min(1, Math.sqrt(sum/buf.length)*3);
+}
+
+const blobs = Array.from({length: 24}, () => ({
+  baseA: Math.random()*Math.PI*2,
+  baseR: 0.18 + Math.random()*0.70,
+  size:  0.10 + Math.random()*0.30,
+  speed: (0.2 + Math.random()*0.6) * (Math.random()<0.5?-1:1),
+  wobble: 0.15 + Math.random()*0.4
+}));
+function mix(a,b,t){ return a + (b-a)*t; }
+
+let t0 = performance.now();
+function draw(){
+  requestAnimationFrame(draw);
+  const t = (performance.now()-t0)/1000;
+  const fallback = 0.25 + 0.20*Math.sin(t*1.2);
+  const micVal = readAmplitude();
+  const target = micVal || fallback;
+  amp = amp*0.85 + target*0.15;
+
+  const W = canvas.width, H = canvas.height;
+  const CX = W/2, CY = H/2;
+  const rNow = R * (1 + 0.15*amp); // pulse strength (size)
+
+  ctx.clearRect(0,0,W,H);
+
+  // Clip to sphere
+  ctx.save(); ctx.beginPath(); ctx.arc(CX, CY, rNow, 0, Math.PI*2); ctx.clip();
+
+  // Base radial glow
+  const baseGrad = ctx.createRadialGradient(CX,CY, rNow*0.15, CX,CY, rNow);
+  baseGrad.addColorStop(0, 'rgba(120,190,255,0.35)');
+  baseGrad.addColorStop(1, 'rgba(120,190,255,0.00)');
+  ctx.fillStyle = baseGrad;
+  ctx.fillRect(CX-rNow, CY-rNow, rNow*2, rNow*2);
+
+  // Fog blobs
+  ctx.globalCompositeOperation = 'lighter';
+  for(const b of blobs){
+    const a  = b.baseA + b.speed*t + Math.sin(t*0.8 + b.baseA)*0.25*b.wobble;
+    const rr = b.baseR * (1 + 0.06*Math.sin(t*0.9 + b.baseA));
+    const x  = CX + Math.cos(a) * rr * (rNow*0.95);
+    const y  = CY + Math.sin(a) * rr * (rNow*0.95);
+    const rad= rNow * b.size * (1 + 0.45*amp);
+
+    const cMix = Math.min(1, Math.max(0, rr+0.2)); // inner blue -> lavender rim
+    const r = Math.floor(mix( 90,160, cMix));
+    const g = Math.floor(mix(160,130, cMix));
+    const bl= 255;
+
+    const g2 = ctx.createRadialGradient(x,y, rad*0.2, x,y, rad);
+    g2.addColorStop(0, `rgba(${r},${g},${bl}, ${0.22 + 0.45*amp})`); // brightness pulse
+    g2.addColorStop(1, `rgba(${r},${g},${bl}, 0)`);
+    ctx.fillStyle = g2;
+    ctx.beginPath(); ctx.arc(x,y,rad,0,Math.PI*2); ctx.fill();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.restore();
+
+  // Soft rim / outer glow
+  ctx.beginPath();
+  ctx.arc(CX, CY, rNow, 0, Math.PI*2);
+  ctx.shadowBlur = 40 + amp*80;
+  ctx.shadowColor = 'rgba(124,211,255,0.35)';
+  ctx.strokeStyle = 'rgba(124,211,255,0.12)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+draw();
+
+/* ====== MIC + STT + n8n linking ====== */
+const statusEl = document.getElementById('status');
+const micBtn   = document.getElementById('micBtn');
+const transcriptEl = document.getElementById('transcript');
+const replyEl  = document.getElementById('reply');
+const textInput= document.getElementById('textInput');
+
+let rec, recognizing = false;
+
+async function initMic(){
+  if (analyser) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    statusEl.textContent = 'mic: not supported'; return;
+  }
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  micStream = await navigator.mediaDevices.getUserMedia({ audio:true });
+  const src = audioCtx.createMediaStreamSource(micStream);
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 512; analyser.smoothingTimeConstant = 0.8;
+  analyser.minDecibels = -90; analyser.maxDecibels = -10;
+  src.connect(analyser);
+  statusEl.textContent = 'mic: ready';
+}
+
+async function sendToN8N(text, mode){
+  replyEl.textContent = '…';
+  try{
+    const res = await fetch(N8N_WEBHOOK_URL, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ text, mode })
+    });
+    if(!res.ok){ replyEl.textContent = `n8n error: ${res.status}`; return; }
+    const data = await res.json();
+    replyEl.textContent = data.reply || '(no reply)';
+    // optional: speak it
+    try{
+      const u = new SpeechSynthesisUtterance(replyEl.textContent);
+      u.lang='en-US'; speechSynthesis.cancel(); speechSynthesis.speak(u);
+    }catch{}
+  }catch(err){
+    replyEl.textContent = 'n8n fetch error';
+    console.error(err);
+  }
+}
+
+/* Hold-to-talk using Web Speech API (Chrome/Edge) */
+micBtn.addEventListener('mousedown', async () => {
+  try { await initMic(); } catch(e){ console.error(e); statusEl.textContent='mic: blocked'; return; }
+
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SpeechRec) {
+    rec = new SpeechRec();
+    rec.lang = 'en-US';
+    rec.interimResults = true;
+    rec.continuous = true;
+    rec.onstart = () => statusEl.textContent = 'mic: listening…';
+    rec.onresult = (e) => {
+      let s=''; for(let i=0;i<e.results.length;i++) s += e.results[i][0].transcript;
+      transcriptEl.textContent = s;
+      textInput.value = s;
+    };
+    rec.onerror = () => statusEl.textContent = 'mic: error';
+    rec.onend = () => { recognizing=false; statusEl.textContent='mic: ready'; };
+    recognizing = true; rec.start();
+  } else {
+    statusEl.textContent = 'mic: ready (no browser STT — type & Send)';
+  }
+});
+
+window.addEventListener('mouseup', async () => {
+  if (rec && recognizing) { rec.stop(); recognizing=false; }
+  const t = (textInput.value || transcriptEl.textContent || '').trim();
+  if (t) { sendToN8N(t, 'hint'); } // auto-send as hint on release
+});
+
+/* Manual send buttons */
+document.getElementById('sendHint').onclick = () => {
+  const t = (textInput.value || transcriptEl.textContent || '').trim();
+  if (t) sendToN8N(t, 'hint');
+};
+document.getElementById('sendAnswer').onclick = () => {
+  const t = (textInput.value || transcriptEl.textContent || '').trim();
+  if (t) sendToN8N(t, 'answer');
+};
+</script>
+</body>
+</html>
