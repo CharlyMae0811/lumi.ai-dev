@@ -12,9 +12,13 @@
   margin-bottom: 10px;
 }
 .logo {
-  max-width: 180px;
-  filter: brightness(1000%); /* makes dark logo white */
-  opacity: 0.9;
+  max-width: 260px;  /* was 180px — try 220–280 for most screens */
+  height: auto;
+  display: inline-block;
+  opacity: 0.95;
+  /* optional glow if you want it to stand out more */
+  filter: brightness(3) drop-shadow(0 0 12px rgba(255,255,255,0.4));
+  margin-bottom: 10px;
 }
 
   html,body{margin:0;height:100%;background:#0a0f14;color:#eaf4ff;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
