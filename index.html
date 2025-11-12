@@ -99,7 +99,7 @@ function draw(){
 
   const W = canvas.width, H = canvas.height;
   const CX = W/2, CY = H/2;
-  const rNow = R * (1 + 0.15*amp); // pulse strength (size)
+  const rNow = R * (1 + 0.3*amp); // pulse strength (size)
 
   ctx.clearRect(0,0,W,H);
 
@@ -128,7 +128,7 @@ function draw(){
     const bl= 255;
 
     const g2 = ctx.createRadialGradient(x,y, rad*0.2, x,y, rad);
-    g2.addColorStop(0, `rgba(${r},${g},${bl}, ${0.22 + 0.45*amp})`); // brightness pulse
+    g2.addColorStop(0, `rgba(${r},${g},${bl}, ${0.22 + 0.6*amp})`); // brightness pulse
     g2.addColorStop(1, `rgba(${r},${g},${bl}, 0)`);
     ctx.fillStyle = g2;
     ctx.beginPath(); ctx.arc(x,y,rad,0,Math.PI*2); ctx.fill();
